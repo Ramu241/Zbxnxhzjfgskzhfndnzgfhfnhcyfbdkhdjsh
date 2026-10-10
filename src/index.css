@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+@layer utilities {
+  @keyframes panelFloat {
+    0%, 100% {
+      transform: translateY(0px) rotate(0deg);
+    }
+    50% {
+      transform: translateY(-12px) rotate(1.2deg);
+    }
+  }
+
+  @keyframes realFlapLeft {
+    0% {
+      transform: rotate(-18deg) scale(0.85) skewY(-6deg);
+    }
+    50% {
+      transform: rotate(12deg) scale(1.08) skewY(4deg);
+    }
+    100% {
+      transform: rotate(-18deg) scale(0.85) skewY(-6deg);
+    }
+  }
+
+  @keyframes realFlapRight {
+    0% {
+      transform: rotate(18deg) scale(0.85) skewY(6deg);
+    }
+    50% {
+      transform: rotate(-12deg) scale(1.08) skewY(-4deg);
+    }
+    100% {
+      transform: rotate(18deg) scale(0.85) skewY(-6deg);
+    }
+  }
+
+  @keyframes snakeRot {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes dotblink {
+    0% {
+      box-shadow: 0 0 6px #00f3ff, 0 0 10px rgba(0, 243, 255, 0.4);
+    }
+    100% {
+      box-shadow: 0 0 18px #00f3ff, 0 0 32px rgba(0, 243, 255, 0.85);
+    }
+  }
+
+  @keyframes scandn {
+    0% {
+      top: -1px;
+      opacity: 0;
+    }
+    4% {
+      opacity: 0.95;
+    }
+    96% {
+      opacity: 0.4;
+    }
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
+  }
+
+  @keyframes imgPop {
+    0% {
+      transform: scale(0.35) rotate(-12deg);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1) rotate(0deg);
+      opacity: 1;
+    }
+  }
+
+  @keyframes popIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.3) translateY(20px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  @keyframes popOut {
+    0% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(0.25) translateY(12px);
+    }
+  }
+}
+
+.animate-panel-float {
+  animation: panelFloat 3.2s ease-in-out infinite;
+}
+
+.animate-wing-left {
+  animation: realFlapLeft 1.4s ease-in-out infinite;
+}
+
+.animate-wing-right {
+  animation: realFlapRight 1.4s ease-in-out infinite;
+}
+
+.animate-snake-rot {
+  animation: snakeRot 1.1s linear infinite;
+}
+
+.animate-snake-rot-rev {
+  animation: snakeRot 2.4s linear infinite reverse;
+}
+
+

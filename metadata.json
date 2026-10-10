@@ -1,0 +1,6 @@
+{
+  "name": "DGClub Wingo Game & Predictor Panel",
+  "description": "GoaOk Wingo game page with floating neon blue cyber hack predictor panel overlay",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
