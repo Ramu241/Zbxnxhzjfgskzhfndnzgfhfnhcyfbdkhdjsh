@@ -1,24 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getNumberImageSrc } from "./utils/numberAssets";
-import { Play } from "lucide-react";
+import { analyzeWingoPeriod, WingoAnalysisResult } from "./utils/wingoAnalyzer";
+import { Play, Volume2, VolumeX, Terminal, ShieldCheck } from "lucide-react";
 
 const TARGET_GAME_URL = "https://www.goaok.com/#/register?invitationCode=116249306924";
-
-// Wingo prediction mapping
-// SMALL (0, 1, 2, 3, 4) vs BIG (5, 6, 7, 8, 9)
-// Includes both primary predicted number and opposite hedge number (5-9 for small, 0-4 for big)
-const LOGIC: Record<number, { n: string; s: "BIG" | "SMALL"; oppN: string }> = {
-  0: { n: "1", s: "SMALL", oppN: "6" },
-  1: { n: "2", s: "SMALL", oppN: "7" },
-  2: { n: "4", s: "SMALL", oppN: "9" },
-  3: { n: "3", s: "SMALL", oppN: "8" },
-  4: { n: "0", s: "SMALL", oppN: "5" },
-  5: { n: "5", s: "BIG", oppN: "0" },
-  6: { n: "8", s: "BIG", oppN: "3" },
-  7: { n: "7", s: "BIG", oppN: "2" },
-  8: { n: "6", s: "BIG", oppN: "1" },
-  9: { n: "9", s: "BIG", oppN: "4" }
-};
 
 export default function App() {
   // Predictor UI states
@@ -36,15 +21,20 @@ export default function App() {
 
   // Game/Prediction data
   const [lastPeriod, setLastPeriod] = useState<string | null>(null);
-  const [predData, setPredData] = useState<{ n: string; s: "BIG" | "SMALL"; oppN: string } | null>(null);
+  const [predAnalysis, setPredAnalysis] = useState<WingoAnalysisResult | null>(null);
   const [bypassRunning, setBypassRunning] = useState(false);
   const [bypassPct, setBypassPct] = useState(0);
   const [showPredBox, setShowPredBox] = useState(false);
   const [liveHex, setLiveHex] = useState("0x4F8A 0x221B");
 
-  // Ping & Balance
+  // Typewriter effect states
+  const [typedText, setTypedText] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+
+  // Sound & Hacker Telemetry
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [packetCount, setPacketCount] = useState(4892);
   const [srvPing, setSrvPing] = useState<number | string>("--");
-  const [balance] = useState<number>(0);
 
   // Drag Refs
   const popupRef = useRef<HTMLDivElement>(null);
@@ -61,12 +51,42 @@ export default function App() {
   // Canvas matrix effect
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Typewriter typing sound synthesizer using Web Audio API
+  const playTypeSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880 + Math.random() * 320, ctx.currentTime);
+      gain.gain.setValueAtTime(0.018, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.035);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.035);
+    } catch {
+      // Audio autoplay policy fallback
+    }
+  };
+
   // Load Google Fonts
   useEffect(() => {
     const link = document.createElement("link");
     link.href = "https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap";
     link.rel = "stylesheet";
     document.head.appendChild(link);
+  }, []);
+
+  // Packet counter increment to simulate real-time packet sniffing
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setPacketCount((p) => p + Math.floor(1 + Math.random() * 4));
+    }, 1800);
+    return () => clearInterval(iv);
   }, []);
 
   // Ping loop
@@ -77,7 +97,7 @@ export default function App() {
       try {
         await fetch("/api/game-issue");
         setSrvPing(Date.now() - start);
-      } catch (e) {
+      } catch {
         setSrvPing(Math.floor(Math.random() * 25 + 35));
       }
       timer = setTimeout(pingLoop, 6000);
@@ -125,18 +145,7 @@ export default function App() {
     };
   }, []);
 
-  // Helper to pick random opposite number
-  const getRandomOppositeNumber = (isSmall: boolean): string => {
-    if (isSmall) {
-      const bigs = ["5", "6", "7", "8", "9"];
-      return bigs[Math.floor(Math.random() * bigs.length)];
-    } else {
-      const smalls = ["0", "1", "2", "3", "4"];
-      return smalls[Math.floor(Math.random() * smalls.length)];
-    }
-  };
-
-  // Fetch Game Period
+  // Fetch Game Period - strictly do NOT auto-show prediction!
   const fetchPeriod = async () => {
     try {
       const res = await fetch("/api/game-issue");
@@ -145,25 +154,19 @@ export default function App() {
         const cur = j.data.issueNumber.toString();
         if (cur !== lastPeriod) {
           setLastPeriod(cur);
-          const digit = parseInt(cur.slice(-1));
-          const lg = LOGIC[digit] || { n: "2", s: "SMALL", oppN: "7" };
-          const oppN = getRandomOppositeNumber(lg.s === "SMALL");
-          setPredData({ ...lg, oppN });
-          // Strictly do not show automatically; user must click GUESS!
-          setShowPredBox(false);
+          setShowPredBox(false); // Wait for GUESS button click!
+          setTypedText("");
+          setIsTyping(false);
         }
       }
-    } catch (e) {
+    } catch {
       const now = new Date();
       const issue = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}1000${String(now.getUTCHours() * 60 + now.getUTCMinutes()).padStart(4, "0")}`;
       if (issue !== lastPeriod) {
         setLastPeriod(issue);
-        const digit = parseInt(issue.slice(-1));
-        const lg = LOGIC[digit] || { n: "2", s: "SMALL", oppN: "7" };
-        const oppN = getRandomOppositeNumber(lg.s === "SMALL");
-        setPredData({ ...lg, oppN });
-        // Strictly do not show automatically; user must click GUESS!
-        setShowPredBox(false);
+        setShowPredBox(false); // Wait for GUESS button click!
+        setTypedText("");
+        setIsTyping(false);
       }
     }
   };
@@ -185,14 +188,19 @@ export default function App() {
         u.pitch = 1.1;
         window.speechSynthesis.speak(u);
       }
-    } catch (e) {}
+    } catch {
+      // Browser speech synthesis fallback
+    }
   };
 
-  // Run Bypass Scan animation with live lab data telemetry
+  // Run Bypass Scan animation with live lab data telemetry + typewriter typewriter reveal
   const handleScan = () => {
     if (bypassRunning) return;
     setBypassRunning(true);
     setCurState("stBypass");
+    setTypedText("");
+    setIsTyping(false);
+
     let pct = 0;
     const hexChars = "0123456789ABCDEF";
     const iv = setInterval(() => {
@@ -207,12 +215,32 @@ export default function App() {
         setCurState("stWingo");
         setShowPredBox(true);
 
-        if (predData) {
-          const newOpp = getRandomOppositeNumber(predData.s === "SMALL");
-          const updatedPred = { ...predData, oppN: newOpp };
-          setPredData(updatedPred);
-          speakPrediction(updatedPred.s, updatedPred.n);
-        }
+        // Compute advanced multi-factor Wingo pattern analysis
+        const analysis = analyzeWingoPeriod(lastPeriod || "2026101410000001");
+        setPredAnalysis(analysis);
+
+        // Start Automatic Typewriter Terminal Effect
+        setIsTyping(true);
+        const fullMessage = [
+          `> [SERVER_HOOK] ${analysis.serverNode}`,
+          `> [ALGO_PATTERN] ${analysis.patternName}`,
+          `> [RESULT_DETECTED] >>> ${analysis.s} (${analysis.n}) <<<`,
+          `> [HEDGE_SAFEGUARD] >>> ${analysis.oppS} (${analysis.oppN}) | ${analysis.confidence} <<<`
+        ].join("\n");
+
+        let charIdx = 0;
+        const typeInterval = setInterval(() => {
+          charIdx++;
+          setTypedText(fullMessage.slice(0, charIdx));
+          if (charIdx % 3 === 0) {
+            playTypeSound();
+          }
+          if (charIdx >= fullMessage.length) {
+            clearInterval(typeInterval);
+            setIsTyping(false);
+            speakPrediction(analysis.s, analysis.n);
+          }
+        }, 18);
       }
     }, 60);
   };
@@ -229,7 +257,6 @@ export default function App() {
 
   const handleOpenPopup = () => {
     if (launcherDragRef.current.hasMoved) {
-      // Don't trigger click if user was dragging
       return;
     }
     setPopupShow(true);
@@ -401,7 +428,7 @@ export default function App() {
         <div
           id="predPopup"
           ref={popupRef}
-          className={`fixed z-[9999] w-[218px] touch-none transition-transform duration-200 ${
+          className={`fixed z-[9999] w-[222px] touch-none transition-transform duration-200 ${
             popupClosing ? "animate-[popOut_0.2s_ease-in_forwards]" : "animate-[popIn_0.38s_cubic-bezier(0.34,1.4,0.64,1)_forwards]"
           }`}
           style={{ left: `${popupPos.left}px`, top: `${popupPos.top}px` }}
@@ -462,17 +489,34 @@ export default function App() {
                 onTouchStart={(e) => e.touches[0] && handlePopupDragStart(e.touches[0].clientX, e.touches[0].clientY)}
                 className="flex flex-col items-center justify-center pt-2.5 pb-0.5 px-2 relative z-10 cursor-grab active:cursor-grabbing"
               >
-                <div className="font-['Orbitron'] text-[11.5px] font-black tracking-[1.2px] text-slate-900 text-center uppercase drop-shadow-sm">
-                  NUMBER HACK
+                <div className="flex items-center gap-1">
+                  <Terminal className="w-3 h-3 text-blue-600" />
+                  <div className="font-['Orbitron'] text-[11.5px] font-black tracking-[1.2px] text-slate-900 text-center uppercase drop-shadow-sm">
+                    SERVER INJECTOR
+                  </div>
                 </div>
                 <div className="config-status flex justify-center items-center gap-1.5 text-[7px] text-slate-500 font-bold mt-[2px]">
                   <span className="text-emerald-600 font-black flex items-center gap-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
-                    LIVE
+                    HOOKED
                   </span>
-                  <span className="text-slate-600 bg-slate-100 px-1 py-[0.5px] rounded border border-slate-200 font-mono">WINGO AI</span>
+                  <span className="text-slate-600 bg-slate-100 px-1 py-[0.5px] rounded border border-slate-200 font-mono">PKTS: {packetCount}</span>
                   <span className="text-blue-600 font-black">{srvPing}MS</span>
                 </div>
+
+                {/* Sound Toggle Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSoundEnabled(!soundEnabled);
+                  }}
+                  title={soundEnabled ? "Mute audio" : "Enable audio"}
+                  className="absolute top-[3px] left-[5px] w-4.5 h-4.5 rounded-full flex items-center justify-center bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-600 text-[8px] cursor-pointer shadow-sm active:scale-85"
+                >
+                  {soundEnabled ? <Volume2 className="w-2.5 h-2.5 text-blue-600" /> : <VolumeX className="w-2.5 h-2.5 text-slate-400" />}
+                </button>
+
+                {/* Close Button */}
                 <button
                   onClick={handleClosePopup}
                   className="xbtn absolute top-[3px] right-[5px] w-4.5 h-4.5 rounded-full flex items-center justify-center bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-[9px] font-black cursor-pointer shadow-sm active:scale-85"
@@ -484,55 +528,83 @@ export default function App() {
               <div className="h-[1px] bg-slate-100 my-[2px]" />
 
               {/* Inner Content Solid Crisp White Glass Box */}
-              <div className="m-[4px] bg-[#f8fafc] rounded-[14px] p-[8px_7px] relative border border-slate-200 flex flex-col items-center justify-center min-h-[92px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)]">
+              <div className="m-[4px] bg-[#f8fafc] rounded-[14px] p-[8px_7px] relative border border-slate-200 flex flex-col items-center justify-center min-h-[96px] shadow-[inset_0_1px_3px_rgba(0,0,0,0.03)]">
                 
-                {/* STATE: WINGO PREDICTION */}
+                {/* STATE: WINGO PREDICTION & TYPEWRITER TERMINAL */}
                 {curState === "stWingo" && (
                   <div className="w-full animate-[stIn_0.25s_ease_forwards]">
-                    {showPredBox && predData ? (
+                    {showPredBox && predAnalysis ? (
                       <div className="bg-white rounded-[10px] p-[6px_5px] mb-[3px] border border-slate-200 relative overflow-hidden shadow-sm">
-                        <div className="flex items-center justify-center gap-1 mb-1 px-1 py-[1.5px] bg-slate-50 rounded border border-slate-200">
+                        
+                        {/* Period & Node Header */}
+                        <div className="flex items-center justify-between gap-1 mb-1 px-1.5 py-[2px] bg-slate-50 rounded border border-slate-200">
                           <span className="text-[6.5px] tracking-[1.2px] text-slate-500 font-mono">
                             PERIOD: <span className="text-slate-900 font-black">{lastPeriod ? lastPeriod.slice(-5) : "---"}</span>
                           </span>
-                          <div className="w-[4px] h-[4px] rounded-full bg-emerald-500 shadow-[0_0_6px_#22c55e] animate-pulse" />
+                          <div className="flex items-center gap-1 text-[5.5px] font-mono text-emerald-600 font-bold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            RNG_HOOK
+                          </div>
                         </div>
 
-                        {/* PRIMARY RESULT */}
-                        <div className="flex items-center gap-1.5 mb-1 relative z-1">
-                          <div className="relative w-[50px] h-[50px] shrink-0 flex items-center justify-center">
+                        {/* AUTOMATIC TYPEWRITER TERMINAL CONSOLE */}
+                        <div className="bg-slate-950 rounded-[7px] p-[5px_6px] mb-1.5 border border-slate-800 shadow-inner relative overflow-hidden text-left font-mono">
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-0.5 mb-1 text-[5px] text-slate-400">
+                            <span className="flex items-center gap-1 text-cyan-400 font-bold">
+                              <Terminal className="w-2 h-2 text-cyan-400 inline" />
+                              GOAOK_SERVER_STREAM
+                            </span>
+                            <span className="text-emerald-400 font-black">
+                              {isTyping ? "DECRYPTING..." : "DECRYPTED"}
+                            </span>
+                          </div>
+                          <div className="text-[6.2px] leading-[1.3] text-emerald-400 whitespace-pre-line tracking-tight">
+                            {typedText || "> CONNECTING SERVER HOOK..."}
+                            {isTyping && <span className="inline-block w-1.5 h-2.5 ml-0.5 bg-cyan-400 animate-pulse align-middle" />}
+                          </div>
+                        </div>
+
+                        {/* VISUAL RESULT BADGE & BALL */}
+                        <div className="flex items-center gap-1.5 mb-1 relative z-1 bg-slate-50 p-1 rounded-lg border border-slate-200">
+                          <div className="relative w-[48px] h-[48px] shrink-0 flex items-center justify-center">
                             <div className={`absolute inset-0 rounded-full border-2 animate-[hexPulse_2s_ease-in-out_infinite_alternate] ${
-                              predData.s === "BIG" ? "border-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]" : "border-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.5)]"
+                              predAnalysis.s === "BIG" ? "border-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]" : "border-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.5)]"
                             }`} />
                             <img
-                              src={getNumberImageSrc(predData.n, predData.s === "BIG")}
-                              alt={predData.n}
-                              className="w-[44px] h-[44px] object-contain relative z-2 animate-[imgPop_0.3s_cubic-bezier(0.34,1.56,0.64,1)_both]"
+                              src={getNumberImageSrc(predAnalysis.n, predAnalysis.s === "BIG")}
+                              alt={predAnalysis.n}
+                              className="w-[42px] h-[42px] object-contain relative z-2 animate-[imgPop_0.3s_cubic-bezier(0.34,1.56,0.64,1)_both]"
                             />
                           </div>
 
-                          <div className="flex-1 flex flex-col gap-[2px]">
-                            <div className="text-[5.5px] tracking-[2px] text-slate-400 font-black uppercase">AI PREDICTION</div>
+                          <div className="flex-1 flex flex-col gap-[1.5px]">
+                            <div className="text-[5.5px] tracking-[1.2px] text-blue-600 font-black uppercase flex items-center gap-0.5">
+                              <ShieldCheck className="w-2.5 h-2.5 text-blue-600" />
+                              CONFIRMED RESULT
+                            </div>
                             <div className={`font-['Orbitron'] text-[13px] font-black tracking-[1.5px] leading-none ${
-                              predData.s === "BIG" ? "text-amber-600 drop-shadow-sm" : "text-blue-600 drop-shadow-sm"
+                              predAnalysis.s === "BIG" ? "text-amber-600 drop-shadow-sm" : "text-blue-600 drop-shadow-sm"
                             }`}>
-                              {predData.s} ({predData.n})
+                              {predAnalysis.s} ({predAnalysis.n})
                             </div>
                             
                             {/* OPPOSITE HEDGE NUMBER */}
                             <div className="text-[6.5px] tracking-[0.5px] font-bold mt-[1px]">
-                              <span className="text-slate-400">OPPOSITE: </span>
-                              <span className={predData.s === "SMALL" ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
-                                {predData.s === "SMALL" ? "BIG" : "SMALL"} ({predData.oppN})
+                              <span className="text-slate-400">HEDGE: </span>
+                              <span className={predAnalysis.s === "SMALL" ? "text-amber-600 font-black" : "text-blue-600 font-black"}>
+                                {predAnalysis.oppS} ({predAnalysis.oppN})
                               </span>
                             </div>
 
-                            <div className="h-[3.5px] bg-slate-100 rounded-full overflow-hidden my-[1px] border border-slate-200">
+                            <div className="h-[3.5px] bg-slate-200 rounded-full overflow-hidden my-[1px] border border-slate-300">
                               <div className={`h-full w-[98%] rounded-full transition-all duration-600 ${
-                                predData.s === "BIG" ? "bg-gradient-to-r from-amber-500 to-amber-400" : "bg-gradient-to-r from-blue-600 to-sky-400"
+                                predAnalysis.s === "BIG" ? "bg-gradient-to-r from-amber-500 to-amber-400" : "bg-gradient-to-r from-blue-600 to-sky-400"
                               }`} />
                             </div>
-                            <div className="text-[5.5px] tracking-[0.8px] text-emerald-600 font-bold">ACCURACY: 99.2%</div>
+                            <div className="flex items-center justify-between text-[5.5px] tracking-[0.6px]">
+                              <span className="text-emerald-600 font-bold">ACCURACY: {predAnalysis.confidence}</span>
+                              <span className="text-slate-400 font-mono">{predAnalysis.seedHash}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -543,11 +615,14 @@ export default function App() {
                             PERIOD: <span className="text-slate-800 font-black">{lastPeriod ? lastPeriod.slice(-5) : "---"}</span>
                           </div>
                           <div className="font-['Orbitron'] text-[13px] font-black text-slate-900 drop-shadow-sm">
-                            READY FOR GUESS
+                            SERVER INJECTOR READY
+                          </div>
+                          <div className="text-[5.5px] font-mono text-emerald-600 font-bold mt-0.5">
+                            ● ALGO PATTERN TRACKER v4.2 ACTIVE
                           </div>
                         </div>
                         <div className="text-[8px] text-slate-600 leading-tight">
-                          Tap <span className="text-blue-600 font-black underline">GUESS</span> to extract lab data
+                          Tap <span className="text-blue-600 font-black underline">GUESS</span> to decrypt live result
                         </div>
                       </div>
                     )}
@@ -562,7 +637,7 @@ export default function App() {
                       <div className="flex items-center gap-1">
                         <div className="w-[5px] h-[5px] rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e] animate-ping" />
                         <span className="text-[6px] tracking-[1.2px] text-rose-600 font-black uppercase font-mono">
-                          LIVE LAB DATA
+                          SERVER INJECTION ACTIVE
                         </span>
                       </div>
                       <span className="text-[6px] font-mono text-slate-600 font-bold bg-white px-1 py-[0.5px] rounded border border-slate-200">
@@ -604,21 +679,21 @@ export default function App() {
                         <div className="font-['Orbitron'] text-[12.5px] font-black text-slate-900 drop-shadow-sm">
                           {bypassPct}%
                         </div>
-                        <div className="text-[5px] font-mono text-rose-600 font-black -mt-0.5">LOCKED</div>
+                        <div className="text-[5px] font-mono text-rose-600 font-black -mt-0.5">SNIFFING</div>
                       </div>
                     </div>
 
                     {/* Lab Data Terminal Feed */}
                     <div className="flex flex-col gap-0.5 text-[5.5px] font-mono py-[3px] px-[5px] border border-slate-700 rounded-[6px] bg-slate-950 text-left shadow-sm">
                       <div className="flex items-center justify-between text-cyan-400">
-                        <span>&gt; LAB_KERNEL_STREAM</span>
-                        <span className="text-emerald-400 font-bold">LIVE_DATA</span>
+                        <span>&gt; GOAOK_WSS_GATEWAY</span>
+                        <span className="text-emerald-400 font-bold">INTERCEPTING</span>
                       </div>
                       <div className="text-slate-300 truncate font-mono">
-                        {bypassPct < 25 && ">> SYNCHRONIZING GOAOK SOCKET [0x8A12]"}
-                        {bypassPct >= 25 && bypassPct < 55 && ">> DECRYPTING WINGO PERIOD RNG SEED"}
-                        {bypassPct >= 55 && bypassPct < 85 && ">> COMPUTING PROBABILITY MATRIX [99.2%]"}
-                        {bypassPct >= 85 && ">> [CRITICAL] RESULT MATRIX READY!"}
+                        {bypassPct < 25 && ">> INTERCEPTING GOAOK TLS SOCKET [443]"}
+                        {bypassPct >= 25 && bypassPct < 55 && ">> INJECTING REVERSE PARITY ENTROPY"}
+                        {bypassPct >= 55 && bypassPct < 85 && ">> DECRYPTING QUANTUM RNG ARRAY"}
+                        {bypassPct >= 85 && ">> [CRITICAL] RESULT DECRYPTED & READY!"}
                       </div>
                     </div>
                   </div>
@@ -636,7 +711,7 @@ export default function App() {
                   className="flex-1 py-1.5 cursor-pointer border rounded-full font-['Orbitron'] text-[8.5px] font-black tracking-[0.8px] uppercase transition-all duration-180 flex items-center justify-center gap-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-md border-blue-500 active:scale-95 disabled:opacity-50"
                 >
                   <Play className="w-2.5 h-2.5 fill-current" />
-                  {bypassRunning ? "EXTRACTING..." : "GUESS"}
+                  {bypassRunning ? "INJECTING..." : "GUESS"}
                 </button>
                 <button
                   id="closeBtnBottom"
